@@ -27,7 +27,7 @@ namespace cron
    #define  CRONCPP_CONSTEXPTR
 #endif
 
-   using cron_int  = uint8_t;
+   using cron_int  = uint16_t;
 
    constexpr std::time_t INVALID_TIME = static_cast<std::time_t>(-1);
 
@@ -83,6 +83,8 @@ namespace cron
       static const cron_int CRON_MIN_MONTHS = 1;
       static const cron_int CRON_MAX_MONTHS = 12;
 
+      static const cron_int CRON_MIN_YEARS = 1970;
+      static const cron_int CRON_MAX_YEARS = 2099;
       static const cron_int CRON_MAX_YEARS_DIFF = 4;
 
 #ifdef CRONCPP_IS_CPP17
@@ -123,6 +125,8 @@ namespace cron
       static const cron_int CRON_MIN_MONTHS = 0;
       static const cron_int CRON_MAX_MONTHS = 11;
 
+      static const cron_int CRON_MIN_YEARS = 1970;
+      static const cron_int CRON_MAX_YEARS = 2099;
       static const cron_int CRON_MAX_YEARS_DIFF = 4;
 
 #ifdef CRONCPP_IS_CPP17
@@ -164,6 +168,8 @@ namespace cron
       static const cron_int CRON_MIN_MONTHS = 1;
       static const cron_int CRON_MAX_MONTHS = 12;
 
+      static const cron_int CRON_MIN_YEARS = 1970;
+      static const cron_int CRON_MAX_YEARS = 2099;
       static const cron_int CRON_MAX_YEARS_DIFF = 4;
 
 #ifdef CRONCPP_IS_CPP17
@@ -197,6 +203,7 @@ namespace cron
       std::bitset<7>  days_of_week;
       std::bitset<31> days_of_month;
       std::bitset<12> months;
+      std::bitset<130> years;
       std::string     expr;
 
       friend bool operator==(cronexpr const & e1, cronexpr const & e2);
@@ -223,6 +230,7 @@ namespace cron
          e1.days_of_week == e2.days_of_week &&
          e1.days_of_month == e2.days_of_month &&
          e1.months == e2.months;
+         e1.years == e2.years;
    }
 
    inline bool operator!=(cronexpr const & e1, cronexpr const & e2)
@@ -238,7 +246,8 @@ namespace cron
          cex.hours.to_string() + " " +
          cex.days_of_month.to_string() + " " +
          cex.months.to_string() + " " +
-         cex.days_of_week.to_string();
+         cex.days_of_week.to_string() + " " +
+         cex.years.to_string();
    }
 
    inline std::string to_cronstr(cronexpr const& cex)
@@ -718,6 +727,29 @@ namespace cron
       }
 
       template <typename Traits>
+      static size_t find_next_year(
+         std::tm& date,
+         std::bitset<130> const & years,
+         size_t year)
+      {
+         std::bitset<7> marked_fields;
+         mark_field(marked_fields, cron_field::second);
+         mark_field(marked_fields, cron_field::minute);
+         mark_field(marked_fields, cron_field::hour_of_day);
+         mark_field(marked_fields, cron_field::day_of_month);
+         mark_field(marked_fields, cron_field::month);
+         mark_field(marked_fields, cron_field::day_of_week);
+         while (!years.test(year) && (year) < Traits::CRON_MAX_YEARS)
+         {
+            add_to_field(date, cron_field::year, 1);
+            year = date.tm_year - 70;
+
+            reset_all_fields(date, marked_fields);
+         }
+         return year;
+      }
+
+      template <typename Traits>
       static bool find_next(cronexpr const & cex,
                             std::tm& date,
                             size_t const dot)
@@ -726,6 +758,16 @@ namespace cron
 
          std::bitset<7> marked_fields{ 0 };
          std::bitset<7> empty_list{ 0 };
+
+         unsigned int year = date.tm_year - 70;
+         auto updated_year = find_next_year<Traits>(
+            date,
+            cex.years,
+            year);
+         if (year != updated_year) {
+            res = find_next<Traits>(cex, date, dot);
+            if (!res) return res;
+         }
 
          unsigned int second = date.tm_sec;
          auto updated_second = find_next(
@@ -838,7 +880,7 @@ namespace cron
          std::remove_if(std::begin(fields), std::end(fields),
             [](CRONCPP_STRING_VIEW s) {return s.empty(); }),
          std::end(fields));
-      if (fields.size() != 6)
+      if (fields.size() < 6 || fields.size() > 7)
          throw bad_cronexpr("cron expression must have six fields");
 
       detail::set_cron_field(fields[0], cex.seconds, Traits::CRON_MIN_SECONDS, Traits::CRON_MAX_SECONDS);
@@ -850,6 +892,11 @@ namespace cron
       detail::set_cron_days_of_month<Traits>(fields[3], cex.days_of_month);
 
       detail::set_cron_month<Traits>(fields[4], cex.months);
+
+      if (fields[6].empty()) {
+         fields[6] = "*";
+      }
+      detail::set_cron_field(fields[6], cex.years, Traits::CRON_MIN_YEARS, Traits::CRON_MAX_YEARS);
 
       cex.expr = expr;
 
